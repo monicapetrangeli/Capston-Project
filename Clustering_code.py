@@ -7,16 +7,16 @@ from PyPDF2 import PdfReader
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, adjusted_rand_score, v_measure_score, davies_bouldin_score, calinski_harabasz_score, classification_report
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report
+
 
 #Loading the embedding model that will be downloaded and stored locally
 model=SentenceTransformer('all-MiniLM-L6-v2')
 
-pdf_folder='path to pdfs'
+pdf_folder='.\Capstone_CM\Documents Database'
 
 #Opening each pdf file
 def extract_text_from_pdf(pdf_path):
@@ -42,12 +42,13 @@ for pdf_path in pdf_paths:
     })
 embedded_pdfs=pd.DataFrame(pdf_data)
 
+
 ##CLUSTERING PDFS FOR MAIN LABELS
 #Transforming embeddings data frame into a matrix
 X=np.vstack(embedded_pdfs['embedding'].values)
 
 #Setting up KMeans clustering model
-n_clusters='number of main labels'
+n_clusters=3          #does this mean that all labels should be present for the clustering to work well? What if I can save the given clusters and then simply check for each new pdf in what of the original clusters he would be part of.
 kmeans=KMeans(n_clusters,random_state=42)
 #Predicting main label based on the cluster and storing the prediction in the data frame
 embedded_pdfs['main_cluster']=kmeans.fit_predict(X)
@@ -56,6 +57,10 @@ labels=kmeans.fit_predict(X)
 #Checking the model performance
 print(kmeans.inertia_)          #A lower inertia is prefered, demonstyrating how well pdfs fit into their respective clusters
 print(silhouette_score(X,labels))       #A score closer to 1 is preferd to show well-separated clusters, if a score of around 0 is found there is an overlapping of clusters. We don't want a negative score
+print(f"Adjusted Rand Index (ARI): {adjusted_rand_score(labels, embedded_pdfs['main_cluster'])}")       # Closer to 0 = random clustering
+print(f"V-Measure: {v_measure_score(labels, embedded_pdfs['main_cluster'])}")       #High better
+print(f"Davies-Bouldin Index (DBI): {davies_bouldin_score(X, labels)}")             #Lower = better separated
+print(f"Calinski-Harabasz Index (CH): {calinski_harabasz_score(X, labels)}")        #Higher=better separated
 
 #MAPPING CLUSTERS TO MAIN LABELS
 #Saving the centroid of each cluster
@@ -66,58 +71,96 @@ similarities = cosine_similarity(centroids, X)
 most_representative_indices = similarities.argmax(axis=1)
 most_representative_documents = [embedded_pdfs.iloc[i] for i in most_representative_indices]
 
-#Extracting the main labels
-labels_data=pd.read_csv('path to labels csv')
-main_labels=labels_data['column of main labels'].unique()
+#Defining main labels
+cluster_to_label = {
+    0: 'Admin',
+    1: 'Other',
+    2: 'Email'
+}
 
-def assign_label_to_cluster(cluster_index,document,main_labels):
-    #we can key_work match, use NLP techniques (recommended) or title/content of the document
-    document_content=document['text']
-    for label in main_labels:
-        if label.lower() in document_content.lower():       #simply matching is the word of the label is found in the pdf, NEEDS TO BE CHANGED!
-            return label
-    return 'Unknown'        #if there is no match
+# Map the cluster number to the label
+embedded_pdfs['main_label'] = embedded_pdfs['main_cluster'].map(cluster_to_label)
 
-cluster_to_label={}
 
-for cluster_index, doc in enumerate(most_representative_documents):
-    label=assign_label_to_cluster(cluster_index,doc,main_labels)
-    cluster_to_label[cluster_index]=label
+#CLUSTERING AGAIN FOR MEDICAL AND LEGAL IN THE OTHER MAIN LABEL
+# Filter only the "Other" cluster
+admin_docs = embedded_pdfs[embedded_pdfs['main_label'] == 'Other']
 
-#Saving the main label in the data frame mapping based on main_cluster
-embedded_pdfs['main_label']=embedded_pdfs['main_cluster'].map(cluster_to_label)
-
-#CLUSTERING AGAIN FOR SUB LABELS
-#Extracting all sub labels
-sub_labels=labels_data['column sub label'].unique().tolist()
-
-for label in main_labels:
-    X=np.vstack(embedded_pdfs[embedded_pdfs['main_label']==label]['embedding'].values)
+# Ensure there are enough samples for clustering
+if len(admin_docs) >= 2:
+    X = np.vstack(admin_docs['embedding'].values)
     
-    #Setting up KMeans clustering model for sub_labels
-    n_clusters='number of sub labels'
-    kmeans=KMeans(n_clusters,random_state=42)
-    embedded_pdfs.loc[embedded_pdfs['main_label']==label, 'sub_cluster'] = kmeans.fit_predict(X)
-    labels=kmeans.fit_predict(X)
+    # Setting up KMeans clustering model for sub-clusters
+    n_clusters = 2
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    
+    # Predict sub-clusters
+    sub_labels = kmeans.fit_predict(X)
+    embedded_pdfs.loc[embedded_pdfs['main_label'] == 'Other', 'sub_cluster'] = sub_labels
+    
+    # Checking the model performance
+    print("Inertia:", kmeans.inertia_)  # Lower inertia is better
+    print("Silhouette Score:", silhouette_score(X, sub_labels))  # Closer to 1 is better
+    print(f"Adjusted Rand Index (ARI): {adjusted_rand_score(sub_labels, embedded_pdfs.loc[embedded_pdfs['main_label'] == 'Other', 'sub_cluster'])}")       # Closer to 0 = random clustering
+    print(f"V-Measure: {v_measure_score(sub_labels, embedded_pdfs.loc[embedded_pdfs['main_label'] == 'Other', 'sub_cluster'])}")       #High better
+    print(f"Davies-Bouldin Index (DBI): {davies_bouldin_score(X, sub_labels)}")             #Lower = better separated
+    print(f"Calinski-Harabasz Index (CH): {calinski_harabasz_score(X, sub_labels)}")        #Higher=better separated
 
-    #Checking the model performance for each sub cluster
-    print(kmeans.inertia_)          #A lower inertia is prefered, demonstyrating how well pdfs fit into their respective clusters
-    print(silhouette_score(X,labels))       #A score closer to 1 is preferd to show well-separated clusters, if a score of around 0 is found there is an overlapping of clusters. We don't want a negative score
+    # Saving the centroid of each cluster
+    centroids = kmeans.cluster_centers_
 
-    #MAPPING SUB CLUSTERS TO SUB LABELS
-    #Saving the centroid of each cluster
-    centroids=kmeans.cluster_centers_
-
-    #Computing  the similarity between centroid and each pdf within the cluster to find  the best representative pdf of the cluster
+    # Computing similarity between centroid and each document
     similarities = cosine_similarity(centroids, X)
     most_representative_indices = similarities.argmax(axis=1)
-    most_representative_documents = [embedded_pdfs.iloc[i] for i in most_representative_indices]
+    
+    # Find the most representative documents for each sub-cluster
+    most_representative_documents = [admin_docs.iloc[i] for i in most_representative_indices]
 
-    sub_cluster_to_label={}
+    #Defining sub labels
+    cluster_to_sub_label = {
+        0: 'Medical',
+        1: 'Legal'
+    }
+    # Map the sub cluster number to the label
+    embedded_pdfs['sub_label'] = embedded_pdfs['sub_cluster'].map(cluster_to_sub_label)
 
-    for cluster_index, doc in enumerate(most_representative_documents):
-        label=assign_label_to_cluster(cluster_index,doc,sub_labels)
-        sub_cluster_to_label[cluster_index]=label
 
-    #Saving the sub label in the data frame mapping based on sub_cluster
-    embedded_pdfs[embedded_pdfs['main_label']==label]['sub_label']=embedded_pdfs[embedded_pdfs['main_label']==label]['sub_cluster'].map(sub_cluster_to_label)
+#CLUSTERING SUB LABELS
+for i in range(0,len(cluster_to_sub_label)):
+    docs = embedded_pdfs[embedded_pdfs['sub_cluster'] == i]
+
+    # Ensure there are enough samples for clustering
+    if len(docs) >= 2:
+        X = np.vstack(docs['embedding'].values)
+        
+        # Setting up KMeans clustering model for sub-clusters
+        n_clusters = 'number of sub_sub_cluster'
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        
+        # Predict sub-clusters
+        sub_labels = kmeans.fit_predict(X)
+        embedded_pdfs.loc[embedded_pdfs['sub_cluster'] == i, 'sub_cluster_2'] = sub_labels
+        
+        # Checking the model performance
+        print("Inertia:", kmeans.inertia_)  # Lower inertia is better
+        print("Silhouette Score:", silhouette_score(X, sub_labels))  # Closer to 1 is better
+        
+        # Saving the centroid of each cluster
+        centroids = kmeans.cluster_centers_
+
+        # Computing similarity between centroid and each document
+        similarities = cosine_similarity(centroids, X)
+        most_representative_indices = similarities.argmax(axis=1)
+        
+        # Find the most representative documents for each sub-cluster
+        most_representative_documents = [admin_docs.iloc[i] for i in most_representative_indices]
+
+        print(embedded_pdfs[embedded_pdfs['sub_cluster'] == i])
+
+        #Defining sub sub labels
+        cluster_to_sub_label = {
+            0: '...',
+            1: '...'
+        }
+        # Map the sub sub cluster number to the label
+        embedded_pdfs['sub_label_2'] = embedded_pdfs['sub_cluster2'].map(cluster_to_sub_label)
