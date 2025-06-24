@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+  <meta charset="UTF-8">
+  <title>Predicció de Cost Sanitari</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 30px;
+      max-width: 700px;
+      margin: auto;
+      text-align: center;
+    }
+    h2 {
+      color: #2e8b57;
+      margin-bottom: 15px;
+    }
+    .bar-container {
+      width: 100%;
+      background-color: #eee;
+      border-radius: 20px;
+      height: 30px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .bar-fill {
+      height: 100%;
+      position: absolute;
+      left: 0;
+      width: 0%;
+      border-radius: 20px;
+      transition: all 0.5s ease;
+    }
+    .cost-range {
+      margin-top: 12px;
+      font-weight: bold;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 25px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    #caseSelector {
+      padding: 10px;
+      border: 2px solid #4CAF50;
+      border-radius: 8px;
+      font-size: 16px;
+      background-color: #f9f9f9;
+      color: #333;
+      margin-bottom: 20px;
+      transition: border-color 0.3s ease;
+    }
+    #caseSelector:hover, #caseSelector:focus {
+      border-color: #2e8b57;
+      outline: none;
+    }
+
+    .explanation {
+      margin-top: 25px;
+      padding: 20px;
+      border: 2px solid #4CAF50;
+      border-radius: 12px;
+      background-color: #f0fff5;
+      display: none;
+      text-align: left;
+      box-shadow: 0 4px 8px rgba(0, 128, 0, 0.1);
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 22px;
+      font-weight: bold;
+      color: #4CAF50;
+      float: right;
+      cursor: pointer;
+      transition: color 0.3s ease;
+    }
+    .close-btn:hover {
+      color: #e74c3c;
+    }
+
+    ul {
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <label for="caseSelector"><strong>Selecciona un cas:</strong></label><br>
+  <select id="caseSelector" onchange="fetchPrediction()">
+    <option value="1">Cas 1: SISCAT, Ginecologia</option>
+    <option value="2">Cas 2: PRIVAT, Ortopèdia</option>
+    <option value="3">Cas 3: PRIVAT, Ginecologia amb Exitus</option>
+    <option value="4">Cas 4: SISCAT, Sense Cirurgia</option>
+  </select>
+
+
+  <h2>Cost estimat</h2>
+
+  <div class="bar-container">
+    <div class="bar-fill" id="barFill"></div>
+  </div>
+  <div class="cost-range" id="costRangeText">Franja carregant...</div>
+
+  <button onclick="showExplanation()" id="explainButton">Explica-ho</button>
+
+  <div class="explanation" id="explanationBox">
+    <button class="close-btn" onclick="hideExplanation()">&times;</button>
+    <h3 style="text-align: center;">Explicació (SHAP i LIME)</h3>
+    <p><strong>SHAP:</strong></p>
+    <ul id="shapList"></ul>
+    <p><strong>LIME:</strong></p>
+    <ul id="limeList"></ul>
+  </div>
+
+  <script>
+
+    const featuresOption1 = {
+      "Exitus": 0,
+      "Especialitat d'acte mèdic": 34,
+      "Risc": "No",
+      "Àrea assistencial": 35,
+      "Tipus de praxi": "AMB CIRURGIA",
+      "Centre docent": "No",
+      "Àmbit": "SISCAT",
+      "Consentiment informat": 0,
+      "Especialitat": "OBSTETRICIA I GINECOLOGIA",
+      "Centre": 11979.0,
+      "Codi diagnòstic": "O813",
+      "Codi procediment mèdic": 72,
+      "Seqüeles": 73,
+      "Reclamants": 1,
+      "Pacients": 1,
+      "Reclamants_Exitus": 0
+    };
+
+    const featuresOption2 = {
+      "Exitus": 0,
+      "Especialitat d'acte mèdic": 11,
+      "Risc": "No",
+      "Àrea assistencial": 35,
+      "Tipus de praxi": "AMB CIRURGIA",
+      "Centre docent": "No",
+      "Àmbit": "PRIVAT",
+      "Consentiment informat": 0,
+      "Especialitat": "CIRURGIA ORTOPÈDICA I TRAUMATOLOGIA",
+      "Centre": 11987.0,
+      "Codi diagnòstic": "S423",
+      "Codi procediment mèdic": 79,
+      "Seqüeles": 157,
+      "Reclamants": 1,
+      "Pacients": 1,
+      "Reclamants_Exitus": 0
+    };
+
+    const featuresOption3 = {
+      "Exitus": 1,
+      "Especialitat d'acte mèdic": 34,
+      "Risc": "Sí",
+      "Àrea assistencial": 38,
+      "Tipus de praxi": "AMB CIRURGIA",
+      "Centre docent": "No",
+      "Àmbit": "PRIVAT",
+      "Consentiment informat": 0,
+      "Especialitat": "OBSTETRICIA I GINECOLOGIA",
+      "Centre": 12005.0,
+      "Codi diagnòstic": "O640",
+      "Codi procediment mèdic": 74,
+      "Seqüeles": 58,
+      "Reclamants": 2,
+      "Pacients": 2,
+      "Reclamants_Exitus": 2
+    };
+
+    const featuresOption4 = {
+    "Exitus": 0,
+    "Especialitat d'acte mèdic": 34,
+    "Risc": "Sí",
+    "Àrea assistencial": 38,
+    "Tipus de praxi": "SENSE CIRURGIA",
+    "Centre docent": "No",
+    "Àmbit": "SISCAT",
+    "Consentiment informat": 0,
+    "Especialitat": "OBSTETRICIA I GINECOLOGIA",
+    "Centre": 12246.0,
+    "Codi diagnòstic": "O149",
+    "Codi procediment mèdic": 73,
+    "Seqüeles": 30,
+    "Reclamants": 2,
+    "Pacients": 1,
+    "Reclamants_Exitus": 0
+  };
+
+
+
+    let cachedData = null;
+
+    async function fetchPrediction() {
+        const selected = document.getElementById("caseSelector").value;
+        const featureMap = {
+          "1": featuresOption1,
+          "2": featuresOption2,
+          "3": featuresOption3,
+          "4": featuresOption4
+        };
+        const features = featureMap[selected];
+
+      const res = await fetch("/api/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features })
+      });
+      const data = await res.json();
+      cachedData = data;
+
+      const rangeText = (data.max_cost !== null)
+        ? `${data.min_cost.toLocaleString()}€ – ${data.max_cost.toLocaleString()}€`
+        : `> ${data.min_cost.toLocaleString()}€`;
+
+      document.getElementById("costRangeText").innerText =
+        `Franja: ${rangeText} (Confiança ${data.confidence}%)`;
+
+      const bandColor = "#c9b722";
+      
+      const totalSpan = 400000;
+      const leftPct = (data.min_cost / totalSpan) * 100;
+      const widthPct = ((data.max_cost ?? 400000) - data.min_cost) / totalSpan * 100;
+
+      const bar = document.getElementById("barFill");
+      bar.style.left = `${leftPct}%`;
+      bar.style.width = `${widthPct}%`;
+      bar.style.backgroundColor = bandColor;
+    }
+
+    function showExplanation() {
+      if (!cachedData) return;
+
+      const data = cachedData;
+
+      // SHAP
+      const shapList = document.getElementById("shapList");
+      shapList.innerHTML = "";
+      data.shap.forEach(line => {
+        const li = document.createElement("li");
+        li.textContent = line;
+        shapList.appendChild(li);
+      });
+
+      // LIME
+      const limeList = document.getElementById("limeList");
+      limeList.innerHTML = "";
+      data.lime.forEach(line => {
+        const li = document.createElement("li");
+        li.textContent = line;
+        limeList.appendChild(li);
+      });
+
+      document.getElementById("explanationBox").style.display = "block";
+    }
+
+    window.onload = fetchPrediction;
+
+    function hideExplanation() {
+  document.getElementById("explanationBox").style.display = "none";
+  }
+
+  </script>
+
+</body>
+</html>
